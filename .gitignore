@@ -1,0 +1,33 @@
+# Build artifacts
+build/
+*.o
+*.d
+*.lst
+*.map
+*.elf
+*.hex
+*.bin
+!*_signed.bin
+
+# IDE and tools
+.cache/
+.west/
+*.pyc
+__pycache__/
+
+# Large external dependencies (clone separately)
+zephyr/
+zephyr-venv/
+STM32CubeN6/
+modules/
+apps/
+nuttx/
+
+# Old/backup directories
+*.old/
+bootloader.old/
+
+# Temporary files
+*.tmp
+*.swp
+*~
