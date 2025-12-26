@@ -41,6 +41,8 @@ C_SOURCES =  \
 ../../FSBL/Core/Src/stm32n6xx_it.c \
 ../../FSBL/Core/Src/stm32n6xx_hal_msp.c \
 ../../Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo.c \
+../../Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_xspi.c \
+../../Drivers/BSP/Components/mx25um51245g/mx25um51245g.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_cortex.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc_ex.c \
@@ -51,6 +53,7 @@ C_SOURCES =  \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_pwr_ex.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_exti.c \
+../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_xspi.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_usart.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_usart_ex.c \
 ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_uart_ex.c \
@@ -124,6 +127,7 @@ C_INCLUDES =  \
 -I../../Drivers/CMSIS/Device/ST/STM32N6xx/Include \
 -I../../Drivers/STM32N6xx_HAL_Driver/Inc/Legacy \
 -I../../Drivers/BSP/STM32N6xx_Nucleo \
+-I../../Drivers/BSP/Components/mx25um51245g \
 -I../../Drivers/CMSIS/Include
 
 

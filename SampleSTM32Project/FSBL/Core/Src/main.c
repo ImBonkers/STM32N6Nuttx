@@ -23,6 +23,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include <stdio.h>
+#include "stm32n6xx_nucleo_xspi.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,6 +56,10 @@ COM_InitTypeDef BspCOMInit;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void load_and_jump_to_nuttx(void);
+static int init_xspi_memory_mapped(void);
+static void serial_init(void);
+static void serial_puts(const char *s);
+static void serial_puthex(uint32_t val);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -99,6 +105,31 @@ int main(void)
 
   /* Turn on blue LED to indicate FSBL is running */
   BSP_LED_On(LED_BLUE);
+
+  /* Initialize serial for debug output */
+  serial_init();
+  serial_puts("\r\n\r\n=== FSBL Starting ===\r\n");
+
+  /* Initialize XSPI2 in basic SPI mode for memory-mapped access */
+  serial_puts("Initializing XSPI2...\r\n");
+  int xspi_result = init_xspi_memory_mapped();
+  if (xspi_result != 0)
+  {
+    serial_puts("XSPI init failed: ");
+    serial_puthex(xspi_result);
+    serial_puts("\r\n");
+    /* XSPI init failed - blink red LED to show error code */
+    BSP_LED_Off(LED_BLUE);
+    for (int i = 0; i < (-xspi_result); i++) {
+      BSP_LED_On(LED_RED);
+      HAL_Delay(200);
+      BSP_LED_Off(LED_RED);
+      HAL_Delay(200);
+    }
+    BSP_LED_On(LED_RED);
+    while(1);
+  }
+  serial_puts("XSPI init OK\r\n");
 
   /* Load NuttX from external flash and jump to it */
   load_and_jump_to_nuttx();
@@ -223,6 +254,133 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /**
+  * @brief  Initialize serial port for debug output
+  */
+static void serial_init(void)
+{
+  COM_InitTypeDef com_init;
+  com_init.BaudRate = 115200;
+  com_init.WordLength = COM_WORDLENGTH_8B;
+  com_init.StopBits = COM_STOPBITS_1;
+  com_init.Parity = COM_PARITY_NONE;
+  com_init.HwFlowCtl = COM_HWCONTROL_NONE;
+  BSP_COM_Init(COM1, &com_init);
+}
+
+/**
+  * @brief  Send string to serial port
+  */
+static void serial_puts(const char *s)
+{
+  HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t *)s, strlen(s), 100);
+}
+
+/**
+  * @brief  Send hex value to serial port
+  */
+static void serial_puthex(uint32_t val)
+{
+  char hex[11];
+  sprintf(hex, "0x%08lX", (unsigned long)val);
+  serial_puts(hex);
+}
+
+/**
+  * @brief  Initialize XSPI2 in basic SPI mode with memory-mapped access
+  * @retval 0 on success, -1 on failure
+  */
+static int init_xspi_memory_mapped(void)
+{
+  XSPI_HandleTypeDef hxspi;
+  XSPI_RegularCmdTypeDef sCommand;
+  XSPI_MemoryMappedTypeDef sMemMappedCfg;
+
+  /* Configure XSPI2 */
+  hxspi.Instance = XSPI2;
+  hxspi.Init.FifoThresholdByte = 4;
+  hxspi.Init.MemorySize = 25;  /* 64MB = 2^26, so MemorySize = 26-1 = 25 */
+  hxspi.Init.ChipSelectHighTimeCycle = 1;
+  hxspi.Init.FreeRunningClock = HAL_XSPI_FREERUNCLK_DISABLE;
+  hxspi.Init.ClockMode = HAL_XSPI_CLOCK_MODE_0;
+  hxspi.Init.WrapSize = HAL_XSPI_WRAP_NOT_SUPPORTED;
+  hxspi.Init.ClockPrescaler = 7;  /* Divide by 8 for safe slow speed */
+  hxspi.Init.SampleShifting = HAL_XSPI_SAMPLE_SHIFT_NONE;
+  hxspi.Init.DelayHoldQuarterCycle = HAL_XSPI_DHQC_DISABLE;
+  hxspi.Init.ChipSelectBoundary = HAL_XSPI_BONDARYOF_NONE;
+  hxspi.Init.MemoryMode = HAL_XSPI_SINGLE_MEM;
+  hxspi.Init.MemoryType = HAL_XSPI_MEMTYPE_MACRONIX;
+
+  if (HAL_XSPI_Init(&hxspi) != HAL_OK)
+  {
+    return -1;
+  }
+
+  /* Reset flash to SPI mode (boot ROM left it in Octal DTR mode) */
+  /* Send Reset Enable (0x66) in OPI DTR mode */
+  sCommand.OperationType = HAL_XSPI_OPTYPE_COMMON_CFG;
+  sCommand.InstructionMode = HAL_XSPI_INSTRUCTION_8_LINES;
+  sCommand.InstructionWidth = HAL_XSPI_INSTRUCTION_16_BITS;
+  sCommand.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE;
+  sCommand.Instruction = 0x6600;  /* Reset Enable in OPI DTR (command repeated) */
+  sCommand.AddressMode = HAL_XSPI_ADDRESS_NONE;
+  sCommand.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+  sCommand.DataMode = HAL_XSPI_DATA_NONE;
+  sCommand.DummyCycles = 0;
+  sCommand.DQSMode = HAL_XSPI_DQS_DISABLE;
+  HAL_XSPI_Command(&hxspi, &sCommand, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
+  /* Send Reset (0x99) in OPI DTR mode */
+  sCommand.Instruction = 0x9900;  /* Reset in OPI DTR */
+  HAL_XSPI_Command(&hxspi, &sCommand, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
+  /* Wait for reset to complete (tRST max = 30us, use 1ms to be safe) */
+  HAL_Delay(1);
+
+  /* Configure READ command for memory-mapped mode (Fast Read 0x0B) */
+  sCommand.OperationType = HAL_XSPI_OPTYPE_READ_CFG;
+  sCommand.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE;
+  sCommand.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+  sCommand.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_DISABLE;
+  sCommand.Instruction = 0x0B;  /* Fast Read command */
+  sCommand.AddressMode = HAL_XSPI_ADDRESS_1_LINE;
+  sCommand.AddressWidth = HAL_XSPI_ADDRESS_24_BITS;
+  sCommand.AddressDTRMode = HAL_XSPI_ADDRESS_DTR_DISABLE;
+  sCommand.Address = 0;
+  sCommand.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+  sCommand.DataMode = HAL_XSPI_DATA_1_LINE;
+  sCommand.DataDTRMode = HAL_XSPI_DATA_DTR_DISABLE;
+  sCommand.DataLength = 0;
+  sCommand.DummyCycles = 8;  /* Fast Read requires 8 dummy cycles */
+  sCommand.DQSMode = HAL_XSPI_DQS_DISABLE;
+
+  if (HAL_XSPI_Command(&hxspi, &sCommand, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK)
+  {
+    return -2;
+  }
+
+  /* Configure WRITE command for memory-mapped mode (Page Program 0x02) */
+  sCommand.OperationType = HAL_XSPI_OPTYPE_WRITE_CFG;
+  sCommand.Instruction = 0x02;  /* Page Program command */
+  sCommand.DummyCycles = 0;     /* No dummy cycles for write */
+
+  if (HAL_XSPI_Command(&hxspi, &sCommand, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK)
+  {
+    return -4;
+  }
+
+  /* Enable memory-mapped mode */
+  sMemMappedCfg.TimeOutActivation = HAL_XSPI_TIMEOUT_COUNTER_DISABLE;
+  sMemMappedCfg.TimeoutPeriodClock = 0;
+
+  if (HAL_XSPI_MemoryMapped(&hxspi, &sMemMappedCfg) != HAL_OK)
+  {
+    return -3;
+  }
+
+  return 0;
+}
+
+/**
   * @brief  Load NuttX from external flash to RAM and jump to it
   * @retval None (should not return)
   */
@@ -234,30 +392,94 @@ static void load_and_jump_to_nuttx(void)
   uint32_t reset_handler;
   void (*nuttx_reset)(void);
 
+  serial_puts("Loading NuttX from ");
+  serial_puthex(NUTTX_FLASH_ADDR);
+  serial_puts("\r\n");
+
+  /* Debug: turn off blue to show we entered this function */
+  BSP_LED_Off(LED_BLUE);
+  HAL_Delay(200);
+
   /* Validate NuttX image - check for valid stack pointer and reset vector */
+  serial_puts("Reading vector table...\r\n");
   initial_sp = src[0];
   reset_handler = src[1];
+
+  serial_puts("  SP: ");
+  serial_puthex(initial_sp);
+  serial_puts("\r\n  Reset: ");
+  serial_puthex(reset_handler);
+  serial_puts("\r\n");
+
+  /* Debug: blink green to show we read from flash */
+  BSP_LED_On(LED_GREEN);
+  HAL_Delay(100);
+  BSP_LED_Off(LED_GREEN);
+  HAL_Delay(100);
 
   /* Stack pointer should be in AXISRAM2 range (0x34000000-0x34180000) */
   /* Note: FSBL uses 0x34180000+ so NuttX stack must be below that */
   if ((initial_sp < 0x34000000) || (initial_sp > 0x34180000))
   {
+    serial_puts("ERROR: Invalid SP!\r\n");
     /* Invalid stack pointer - turn on red LED and halt */
     BSP_LED_On(LED_RED);
     return;
+  }
+  serial_puts("SP valid\r\n");
+
+  /* Debug: blink green twice to show SP is valid */
+  for (int i = 0; i < 2; i++) {
+    BSP_LED_On(LED_GREEN);
+    HAL_Delay(100);
+    BSP_LED_Off(LED_GREEN);
+    HAL_Delay(100);
   }
 
   /* Reset handler should be in AXISRAM2 range where NuttX will run */
   if ((reset_handler < 0x34000000) || (reset_handler > 0x34180000))
   {
+    serial_puts("ERROR: Invalid reset handler!\r\n");
     /* Invalid reset handler - turn on red and green LEDs and halt */
     BSP_LED_On(LED_RED);
     BSP_LED_On(LED_GREEN);
     return;
   }
+  serial_puts("Reset handler valid\r\n");
+
+  /* Debug: blink green 3 times to show reset handler is valid, about to copy */
+  for (int i = 0; i < 3; i++) {
+    BSP_LED_On(LED_GREEN);
+    HAL_Delay(100);
+    BSP_LED_Off(LED_GREEN);
+    HAL_Delay(100);
+  }
 
   /* Copy NuttX image from external flash to AXISRAM2 */
+  serial_puts("Copying NuttX to RAM...\r\n");
   memcpy(dst, src, NUTTX_SIZE);
+
+  /* Verify copy by checking first words in RAM */
+  serial_puts("Verifying copy...\r\n");
+  serial_puts("  RAM[0] (SP):    ");
+  serial_puthex(dst[0]);
+  serial_puts("\r\n  RAM[1] (Reset): ");
+  serial_puthex(dst[1]);
+  serial_puts("\r\n  RAM[2]:         ");
+  serial_puthex(dst[2]);
+  serial_puts("\r\n  RAM[3]:         ");
+  serial_puthex(dst[3]);
+  serial_puts("\r\n");
+
+  if (dst[0] != initial_sp || dst[1] != reset_handler)
+  {
+    serial_puts("ERROR: Copy verification failed!\r\n");
+    BSP_LED_On(LED_RED);
+    return;
+  }
+  serial_puts("Copy verified OK\r\n");
+  serial_puts("Jumping to NuttX...\r\n");
+  HAL_Delay(10);  /* Let UART finish transmitting */
 
   /* Data synchronization barrier */
   __DSB();
@@ -273,6 +495,12 @@ static void load_and_jump_to_nuttx(void)
 
   /* Set the vector table to NuttX location */
   SCB->VTOR = NUTTX_RAM_ADDR;
+
+  /* Clear MSPLIM and PSPLIM - critical for ARMv8-M!
+   * The boot ROM sets these limits, and setting MSP outside the limit
+   * will cause an immediate stack overflow fault. */
+  __set_MSPLIM(0);
+  __set_PSPLIM(0);
 
   /* Set the main stack pointer */
   __set_MSP(initial_sp);
