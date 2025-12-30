@@ -49,11 +49,18 @@ The signing tool is included with STM32CubeProgrammer at:
 
 ---
 
-## Current Status: FSBL Boots from External Flash, NuttX Loading In Progress
+## Current Status: FSBL Fully Functional with XSPI and Serial Debug
 
 ### Latest Progress (December 26, 2024)
 
-**FSBL successfully boots from external flash and turns on blue LED.**
+**FSBL successfully boots, initializes XSPI2 memory-mapped access, loads NuttX to RAM, and jumps to it.**
+
+Key achievements:
+- XSPI2 initialization in basic SPI mode with memory-mapped access
+- Flash reset from Octal DTR mode (set by boot ROM) to standard SPI mode
+- Serial debug output via USART1 at 115200 baud
+- Copy verification before jumping to NuttX
+- MSPLIM/PSPLIM clearing before setting MSP (ARMv8-M requirement)
 
 #### Critical Discovery: `-align` Flag Required for Signing
 
@@ -111,19 +118,74 @@ rm -f build/SampleProject_FSBL_signed.bin
 1. Boot ROM loads signed FSBL from 0x70000000 to AXISRAM2 (0x34180400)
 2. FSBL initializes clocks and GPIO
 3. FSBL turns on **blue LED** (confirms FSBL is running)
-4. FSBL copies NuttX from 0x70020000 to 0x34000000 (256KB)
-5. FSBL validates NuttX vector table (SP and Reset_Handler in valid range)
-6. FSBL turns on **green LED** (confirms copy complete)
-7. FSBL jumps to NuttX Reset_Handler
-8. If validation fails: **red LED** = bad SP, **red+green LED** = bad reset handler
+4. FSBL initializes serial port (USART1 @ 115200 baud)
+5. FSBL initializes XSPI2 in memory-mapped mode:
+   - Resets flash from Octal DTR mode to SPI mode (0x6600/0x9900 commands)
+   - Configures Fast Read (0x0B) with 8 dummy cycles
+   - Enables memory-mapped access at 0x70000000
+6. FSBL reads NuttX vector table from 0x70020000
+7. FSBL validates NuttX vector table (SP and Reset_Handler in valid range)
+8. FSBL copies NuttX from 0x70020000 to 0x34000000 (256KB)
+9. FSBL verifies copy by comparing first words in RAM vs flash
+10. FSBL clears MSPLIM/PSPLIM, sets MSP, and jumps to NuttX Reset_Handler
+
+Error handling:
+- **Red LED** = Invalid stack pointer
+- **Red + Green LED** = Invalid reset handler
+- **Red LED blink pattern** = XSPI initialization error (blink count = error code)
 
 #### Current LED Status
 
 | LED | Status | Meaning |
 |-----|--------|---------|
-| Blue | ON | FSBL started successfully |
-| Green | ? | NuttX copy complete, about to jump |
-| Red | OFF | No validation errors |
+| Blue | ON then OFF | FSBL started, then entering NuttX load sequence |
+| Green | Blinks | Progress indicator during vector table read and validation |
+| Red | OFF | No errors |
+
+#### Serial Debug Output
+
+The FSBL outputs debug messages via USART1 (ST-Link Virtual COM Port) at 115200 baud.
+Example output:
+```
+=== FSBL Starting ===
+Initializing XSPI2...
+XSPI init OK
+Loading NuttX from 0x70020000
+Reading vector table...
+  SP: 0x340C2AE4
+  Reset: 0x34000489
+SP valid
+Reset handler valid
+Copying NuttX to RAM...
+Verifying copy...
+  RAM[0] (SP):    0x340C2AE4
+  RAM[1] (Reset): 0x34000489
+  RAM[2]:         0x340004A1
+  RAM[3]:         0x340004A3
+Copy verified OK
+Jumping to NuttX...
+```
+
+#### XSPI2 Initialization Details
+
+The boot ROM leaves the MX25UM51245G flash in Octal DTR mode. The FSBL must reset it to standard SPI mode before memory-mapped access works:
+
+```c
+/* Reset flash from Octal DTR mode to SPI mode */
+/* Send Reset Enable (0x66) in OPI DTR mode - command is doubled */
+sCommand.InstructionMode = HAL_XSPI_INSTRUCTION_8_LINES;
+sCommand.InstructionWidth = HAL_XSPI_INSTRUCTION_16_BITS;
+sCommand.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE;
+sCommand.Instruction = 0x6600;  /* Reset Enable */
+HAL_XSPI_Command(&hxspi, &sCommand, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
+sCommand.Instruction = 0x9900;  /* Reset */
+HAL_XSPI_Command(&hxspi, &sCommand, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
+HAL_Delay(1);  /* Wait for reset (tRST max = 30us) */
+```
+
+After reset, the flash is in standard SPI mode and can be accessed using Fast Read (0x0B) with 8 dummy cycles.
 
 #### NuttX Memory Configuration
 
@@ -322,10 +384,14 @@ Based on Zephyr analysis, NuttX needs:
 
 | File | Description |
 |------|-------------|
+| `SampleSTM32Project/FSBL/Core/Src/main.c` | **FSBL main code** (XSPI init, serial debug, NuttX loader) |
+| `SampleSTM32Project/FSBL/Core/Src/stm32n6xx_hal_msp.c` | HAL MSP init (XSPI GPIO, VddIO3 config) |
+| `SampleSTM32Project/FSBL/Core/Inc/mx25um51245g_conf.h` | Flash driver configuration |
+| `SampleSTM32Project/Drivers/BSP/Components/mx25um51245g/` | MX25UM51245G flash driver |
+| `SampleSTM32Project/Drivers/BSP/STM32N6xx_Nucleo/` | Nucleo BSP (LED, COM, XSPI) |
 | `zephyr/soc/st/stm32/stm32n6x/soc.c` | Zephyr STM32N6 SOC init (reference) |
 | `zephyr/boards/st/nucleo_n657x0_q/` | Zephyr board files |
 | `STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Source/Templates/system_stm32n6xx_fsbl.c` | ST HAL SystemInit |
-| `minimal_test/main.c` | Minimal test code |
 | `nuttx/` | NuttX source |
 
 ---
@@ -364,4 +430,4 @@ lsusb | grep -i stm
 
 ---
 
-*Last updated: December 2024*
+*Last updated: December 27, 2024*
