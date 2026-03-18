@@ -30,12 +30,50 @@ CALIB_SAMPLES = 20
 
 
 def create_float_model():
-    """Create a float32 Conv2D model (will be quantized next)."""
-    np.random.seed(42)
-    W1 = (np.random.randn(16, 3, 3, 3) * 0.1).astype(np.float32)
-    B1 = np.zeros(16, dtype=np.float32)
-    W2 = (np.random.randn(16, 16, 3, 3) * 0.1).astype(np.float32)
-    B2 = np.zeros(16, dtype=np.float32)
+    """Create a float32 Conv2D model (will be quantized next).
+
+    Uses structured weights that produce varied, non-zero outputs:
+    - Conv1: 16 filters including edge detectors (horizontal, vertical,
+      diagonal) and averaging filters, with positive bias to ensure
+      outputs survive ReLU after quantization.
+    - Conv2: channel mixing with positive bias.
+    """
+
+    W1 = np.zeros((16, 3, 3, 3), dtype=np.float32)
+
+    # Filters 0-3: horizontal edge detectors (per input channel + average)
+    for ch in range(3):
+        W1[ch, ch, 0, :] = -1.0
+        W1[ch, ch, 2, :] = 1.0
+    W1[3] = W1[0] + W1[1] + W1[2]
+
+    # Filters 4-7: vertical edge detectors
+    for ch in range(3):
+        W1[4 + ch, ch, :, 0] = -1.0
+        W1[4 + ch, ch, :, 2] = 1.0
+    W1[7] = W1[4] + W1[5] + W1[6]
+
+    # Filters 8-11: averaging (blur) filters per channel + combined
+    for ch in range(3):
+        W1[8 + ch, ch, :, :] = 1.0 / 9.0
+    W1[11] = W1[8] + W1[9] + W1[10]
+
+    # Filters 12-15: diagonal and identity-like
+    for ch in range(3):
+        W1[12 + ch, ch, 1, 1] = 2.0  # center-weighted (amplify)
+    W1[15, :, 1, 1] = 1.0  # average all channels at center
+
+    # Positive bias ensures many outputs survive ReLU
+    B1 = np.full(16, 0.5, dtype=np.float32)
+
+    # Conv2: simple channel mixing — average groups of 4 input channels
+    W2 = np.zeros((16, 16, 3, 3), dtype=np.float32)
+    for i in range(16):
+        # Each output filter reads from 4 input channels at center pixel
+        for j in range(4):
+            src = (i + j) % 16
+            W2[i, src, 1, 1] = 0.25
+    B2 = np.full(16, 0.2, dtype=np.float32)
 
     inits = [
         numpy_helper.from_array(W1, "w1"),
@@ -69,11 +107,11 @@ def create_float_model():
 
 
 class RandomCalibReader(CalibrationDataReader):
-    """Generate random calibration data for INT8 quantization."""
+    """Generate calibration data matching the test input pattern."""
     def __init__(self, n=CALIB_SAMPLES):
         np.random.seed(0)
         self.data = iter([
-            {"input": np.random.rand(1, 3, 32, 32).astype(np.float32)}
+            {"input": np.random.rand(1, 3, 32, 32).astype(np.float32) * 2.0}
             for _ in range(n)
         ])
 
