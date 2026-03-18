@@ -7,6 +7,8 @@ STPROG        := $(CUBEPROG_DIR)/bin/STM32_Programmer_CLI
 SIGNTOOL      := $(CUBEPROG_DIR)/bin/STM32_SigningTool_CLI
 EXTLOADER     := $(CUBEPROG_DIR)/bin/ExternalLoader/MX25UM51245G_STM32N6570-NUCLEO.stldr
 NUTTX_VENV    ?= $(HOME)/.nuttx-venv
+STEDGEAI_DIR  ?= $(HOME)/STMicroelectronics/STEdgeAI3/3.0
+STEDGEAI      := $(STEDGEAI_DIR)/Utilities/linux/stedgeai
 
 # ---- Addresses ----
 NUTTX_LOAD_ADDR  := 0x34000400
@@ -26,12 +28,19 @@ FSBL_BIN       := $(FSBL_DIR)/build/SampleProject_FSBL.bin
 FSBL_ELF       := $(FSBL_DIR)/build/SampleProject_FSBL.elf
 FSBL_SIGNED    := $(FSBL_DIR)/build/SampleProject_FSBL_signed.bin
 
-NPU_WEIGHTS    := npu/model/generated/npu_test_atonbuf.xSPI2.raw
+NPU_DIR        := npu
+NPU_MODEL_DIR  := $(NPU_DIR)/model
+NPU_GEN_DIR    := $(NPU_MODEL_DIR)/generated
+NPU_VENV       := $(NPU_DIR)/.venv
+NPU_ONNX_FP32  := $(NPU_MODEL_DIR)/npu_test_fp32.onnx
+NPU_ONNX_INT8  := $(NPU_MODEL_DIR)/npu_test_s8.onnx
+NPU_WEIGHTS    := $(NPU_GEN_DIR)/npu_test_weights.bin
 
 NUTTX_PATH     := $(HOME)/.local/bin:$(NUTTX_VENV)/bin:$(PATH)
 
 .PHONY: all nuttx fsbl sign flash-dev flash flash-fsbl flash-nuttx \
-        flash-weights serial configure menuconfig clean clean-nuttx clean-fsbl help
+        flash-weights npu-model npu-venv serial configure menuconfig \
+        clean clean-nuttx clean-fsbl clean-npu help
 
 # ---- Default target ----
 all: nuttx fsbl sign
@@ -87,6 +96,38 @@ flash-weights: $(NPU_WEIGHTS)
 	$(STPROG) -c port=SWD mode=HOTPLUG ap=1 -el $(EXTLOADER) \
 	  -w $(NPU_WEIGHTS) $(WEIGHTS_FLASH_ADDR)
 
+# ---- NPU model generation pipeline ----
+# Creates venv, generates float model, quantizes to INT8, compiles for NPU,
+# and renames weights to .bin for STM32CubeProgrammer.
+
+npu-venv: $(NPU_VENV)/bin/python3
+
+$(NPU_VENV)/bin/python3:
+	python3 -m venv $(NPU_VENV)
+	$(NPU_VENV)/bin/pip install --quiet numpy onnx onnxruntime
+
+$(NPU_ONNX_INT8): $(NPU_DIR)/create_model.py $(NPU_VENV)/bin/python3
+	$(NPU_VENV)/bin/python3 $(NPU_DIR)/create_model.py
+
+$(NPU_WEIGHTS): $(NPU_ONNX_INT8)
+	@rm -rf $(NPU_GEN_DIR)
+	$(STEDGEAI) generate \
+	  --model $(NPU_ONNX_INT8) \
+	  --target stm32n6 \
+	  --st-neural-art \
+	  --name npu_test \
+	  --output $(NPU_GEN_DIR) \
+	  --c-api st-ai \
+	  --verbosity 1
+	cp $(NPU_GEN_DIR)/npu_test_atonbuf.xSPI2.raw $(NPU_WEIGHTS)
+	@echo "NPU model generated: $(NPU_GEN_DIR)/"
+	@echo "Weights: $(NPU_WEIGHTS) ($$(stat -c%s $(NPU_WEIGHTS)) bytes)"
+
+npu-model: $(NPU_WEIGHTS)
+
+clean-npu:
+	rm -rf $(NPU_GEN_DIR) $(NPU_MODEL_DIR)/npu_test_fp32.onnx $(NPU_VENV)
+
 # ---- Serial console ----
 serial:
 	tio /dev/ttyACM0 -b 115200
@@ -99,7 +140,7 @@ menuconfig:
 	PATH=$(NUTTX_PATH) $(MAKE) -C $(NUTTX_DIR) menuconfig
 
 # ---- Clean ----
-clean: clean-nuttx clean-fsbl
+clean: clean-nuttx clean-fsbl clean-npu
 
 clean-nuttx:
 	PATH=$(NUTTX_PATH) $(MAKE) -C $(NUTTX_DIR) distclean || true
@@ -116,6 +157,7 @@ help:
 	@echo "    make nuttx        Build NuttX only"
 	@echo "    make fsbl         Build FSBL only"
 	@echo "    make sign         Sign FSBL binary (auto Reset_Handler)"
+	@echo "    make npu-model    Generate INT8 NPU model (venv + quantize + STEdgeAI)"
 	@echo ""
 	@echo "  Flash:"
 	@echo "    make flash-dev    Flash NuttX to SRAM (DEV mode)"
@@ -135,3 +177,4 @@ help:
 	@echo "    make clean        Clean NuttX + FSBL"
 	@echo "    make clean-nuttx  Clean NuttX only"
 	@echo "    make clean-fsbl   Clean FSBL only"
+	@echo "    make clean-npu    Clean NPU model + venv"
