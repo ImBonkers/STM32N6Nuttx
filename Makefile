@@ -38,15 +38,21 @@ NPU_WEIGHTS    := $(NPU_GEN_DIR)/npu_test_weights.bin
 
 NUTTX_PATH     := $(HOME)/.local/bin:$(NUTTX_VENV)/bin:$(PATH)
 
-.PHONY: all nuttx fsbl sign flash-dev flash flash-fsbl flash-nuttx \
+.PHONY: all rebuild nuttx fsbl sign flash-dev flash flash-fsbl flash-nuttx \
         flash-weights npu-model npu-venv serial configure menuconfig \
         clean clean-nuttx clean-fsbl clean-npu help
 
 # ---- Default target ----
 all: nuttx fsbl sign
 
+# ---- Full rebuild from scratch ----
+rebuild:
+	$(MAKE) clean
+	$(MAKE) configure
+	$(MAKE) all
+
 # ---- NuttX ----
-nuttx:
+nuttx: $(NPU_WEIGHTS)
 	PATH=$(NUTTX_PATH) $(MAKE) -C $(NUTTX_DIR) -j$$(nproc)
 
 # ---- FSBL ----
@@ -140,7 +146,7 @@ menuconfig:
 	PATH=$(NUTTX_PATH) $(MAKE) -C $(NUTTX_DIR) menuconfig
 
 # ---- Clean ----
-clean: clean-nuttx clean-fsbl clean-npu
+clean: clean-nuttx clean-fsbl
 
 clean-nuttx:
 	PATH=$(NUTTX_PATH) $(MAKE) -C $(NUTTX_DIR) distclean || true
@@ -154,6 +160,7 @@ help:
 	@echo ""
 	@echo "  Build:"
 	@echo "    make all          Build NuttX + FSBL + sign FSBL"
+	@echo "    make rebuild      Clean + configure + build everything"
 	@echo "    make nuttx        Build NuttX only"
 	@echo "    make fsbl         Build FSBL only"
 	@echo "    make sign         Sign FSBL binary (auto Reset_Handler)"
