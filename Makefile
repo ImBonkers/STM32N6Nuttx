@@ -145,6 +145,10 @@ configure:
 menuconfig:
 	PATH=$(NUTTX_PATH) $(MAKE) -C $(NUTTX_DIR) menuconfig
 
+savedefconfig:
+	PATH=$(NUTTX_PATH) $(MAKE) -C $(NUTTX_DIR) savedefconfig
+	cp $(NUTTX_DIR)/defconfig $(NUTTX_DIR)/boards/arm/stm32n6/nucleo-n657x0-q/configs/nsh/defconfig
+
 # ---- Clean ----
 clean: clean-nuttx clean-fsbl
 
