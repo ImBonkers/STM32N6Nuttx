@@ -34,7 +34,7 @@ NPU_GEN_DIR    := $(NPU_MODEL_DIR)/generated
 NPU_VENV       := $(NPU_DIR)/.venv
 NPU_ONNX_FP32  := $(NPU_MODEL_DIR)/npu_test_fp32.onnx
 NPU_ONNX_INT8  := $(NPU_MODEL_DIR)/npu_test_s8.onnx
-NPU_WEIGHTS    := $(NPU_GEN_DIR)/npu_test_weights.bin
+NPU_WEIGHTS    := $(NPU_GEN_DIR)/people_det_weights.bin
 
 NUTTX_PATH     := $(HOME)/.local/bin:$(NUTTX_VENV)/bin:$(PATH)
 
