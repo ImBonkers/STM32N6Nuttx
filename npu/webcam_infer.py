@@ -78,34 +78,34 @@ def preprocess_frame(frame, input_w, input_h):
 
 
 def decode_yolov8(raw_bytes, conf_threshold, iou_threshold, input_w, input_h):
-    """Decode YOLOv8n int8 output [5, 756] to detections.
+    """Decode YOLOv8n output to detections.
 
-    DequantizeLinear SW epoch doesn't produce float — output is int8.
-    Channels 0-3 (bbox): scale=0.0563936718, zp=-128
-    Channel 4 (conf): scale=0.567050219, zp=82
-    Layout: NCHW [5, 756] — 5 channels, 756 boxes.
-    Bbox values are in pixel coords after dequantization.
+    DequantizeLinear SW epoch doesn't produce float — buffer has int8.
+    Pre-DequantizeLinear tensor: Concat_544 [1, 756, 5] int8
+      scale=0.00513258297, zp=-128
+    Channels: [x_center, y_center, width, height, confidence]
+    Coordinates are normalized (0-1). Confidence is 0-1.
+    Only first 3780 bytes of the 15120-byte buffer are meaningful.
     """
-    raw = np.frombuffer(raw_bytes, dtype=np.int8)
-    n_boxes = len(raw) // 5
-    data = raw.reshape(5, n_boxes).astype(np.float32)
+    SCALE = 0.00513258297
+    ZP = -128
 
-    # Dequantize bbox channels (0-3): scale=0.0564, zp=-128
-    bbox = (data[:4] - (-128)) * 0.0563936718
-
-    # Dequantize conf channel (4): scale=0.567, zp=82
-    conf_raw = (data[4] - 82) * 0.567050219
+    raw = np.frombuffer(raw_bytes[:3780], dtype=np.int8)
+    data = (raw.astype(np.float32) - ZP) * SCALE
+    # Try [5, 756] layout (Transpose ran on int8 before DequantizeLinear)
+    data = data.reshape(5, 756).T  # → [756, 5]
 
     detections = []
-    for i in range(n_boxes):
-        conf = float(conf_raw[i])
+    for i in range(756):
+        conf = float(min(data[i, 4], 1.0))
         if conf < conf_threshold:
             continue
 
-        cx = float(bbox[0, i])
-        cy = float(bbox[1, i])
-        w = float(bbox[2, i])
-        h = float(bbox[3, i])
+        # Coords are normalized 0-1, scale to pixel space
+        cx = float(data[i, 0]) * input_w
+        cy = float(data[i, 1]) * input_h
+        w = float(data[i, 2]) * input_w
+        h = float(data[i, 3]) * input_h
 
         x1 = max(0, cx - w / 2)
         y1 = max(0, cy - h / 2)
