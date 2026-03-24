@@ -75,17 +75,20 @@ def nms(detections, iou_threshold=0.3):
 
 
 def preprocess_frame(frame):
-    """Resize webcam frame to 224x224 NCHW RGB uint8."""
+    """Resize webcam frame to 224x224 NHWC RGB uint8."""
     resized = cv2.resize(frame, (INPUT_W, INPUT_H),
                          interpolation=cv2.INTER_LINEAR)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    nchw = np.transpose(rgb, (2, 0, 1))[np.newaxis, ...]
-    return nchw.astype(np.uint8).flatten().view(np.int8)
+    # Model expects NHWC [224, 224, 3] — NOT NCHW
+    return rgb.astype(np.uint8).flatten().view(np.int8)
 
 
 def decode_detections(raw_int8, conf_threshold, iou_threshold):
     """Decode TinyYOLOv2 int8 output to filtered detections."""
     raw_float = (raw_int8.astype(np.float32) - PEOPLE_DET_ZP) * PEOPLE_DET_SCALE
+    # ST's decode iterates flat buffer with stride 6 (anch_stride).
+    # Try direct HWC reshape — the NPU output might already be
+    # in [7*7*5, 6] flat order matching ST's el_offset iteration.
     grid = raw_float.reshape(GRID_H, GRID_W, 30)
     vals_per_anchor = 30 // NUM_ANCHORS
 
@@ -151,6 +154,8 @@ def draw_stats(frame, fps, latency_ms, n_dets):
 def main():
     parser = argparse.ArgumentParser(description="Webcam -> NPU inference")
     parser.add_argument("--camera", type=int, default=None)
+    parser.add_argument("--image", type=str, default=None,
+                        help="Use static image instead of camera")
     parser.add_argument("--port", type=str, default=None)
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--conf", type=float, default=0.3)
@@ -176,6 +181,54 @@ def main():
     print(f"Connected. Input: {info['input_shape']} ({info['input_size']}B), "
           f"Output: {info['output_shape']} ({info['output_size']}B)")
 
+    # --- Static image mode ---
+    if args.image:
+        frame = cv2.imread(args.image)
+        if frame is None:
+            print(f"ERROR: Cannot load {args.image}")
+            ser.write(bytes([CMD_QUIT]))
+            ser.close()
+            sys.exit(1)
+
+        h, w = frame.shape[:2]
+        scale_x, scale_y = w / INPUT_W, h / INPUT_H
+        print(f"Image: {w}x{h}, conf={args.conf}")
+
+        input_data = preprocess_frame(frame)
+        in_csum = sum(int(b) & 0xff for b in input_data.tobytes())
+
+        output = run_inference(ser, input_data, info["output_size"])
+        if output is None:
+            print("Inference FAILED")
+        else:
+            out_csum = sum(int(b) & 0xff for b in output.tobytes())
+            detections = decode_detections(output, args.conf, args.iou)
+            print(f"in={in_csum} out={out_csum} dets={len(detections)}")
+            for (x1, y1, x2, y2, conf, _) in detections:
+                print(f"  ({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f}) {conf:.0%}")
+
+            draw_detections(frame, detections, scale_x, scale_y)
+
+            # Save result
+            import os
+            out_dir = os.path.join(os.path.dirname(args.image), "out")
+            os.makedirs(out_dir, exist_ok=True)
+            base = os.path.splitext(os.path.basename(args.image))[0]
+            out_path = os.path.join(out_dir, f"{base}_det.jpg")
+            cv2.imwrite(out_path, frame)
+            print(f"Saved: {out_path}")
+
+            if not args.no_display:
+                cv2.imshow("NPU Inference", frame)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+
+        ser.write(bytes([CMD_QUIT]))
+        ser.flush()
+        ser.close()
+        return
+
+    # --- Camera mode ---
     cam_idx = args.camera
     if cam_idx is None:
         cam_idx = find_camera()

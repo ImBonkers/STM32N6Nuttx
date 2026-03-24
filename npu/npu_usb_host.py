@@ -39,13 +39,14 @@ INFO_SIZE = struct.calcsize(INFO_FMT)  # 48 bytes
 PEOPLE_DET_SCALE = 0.1461298167705536
 PEOPLE_DET_ZP    = 11
 
-# YOLO anchor boxes (5 anchors for TinyYOLOv2)
+# YOLO anchor boxes (5 anchors for ST's TinyYOLOv2 people detection)
+# From x-cube-n6-ai-people-detection-tracking postprocess_conf.h
 YOLO_ANCHORS = np.array([
-    [1.08, 1.19],
-    [3.42, 4.41],
-    [6.63, 11.38],
-    [9.42, 5.11],
-    [16.62, 10.52],
+    [0.9883, 3.3606],
+    [2.1194, 5.3759],
+    [3.0520, 9.1336],
+    [5.5517, 9.3066],
+    [9.7260, 11.1422],
 ])
 
 # Person class index in VOC/COCO (TinyYOLOv2 VOC: 20 classes, person=14)
@@ -161,7 +162,7 @@ def decode_yolo_output(raw_int8):
     # Dequantize int8 -> float32
     raw_float = (raw_int8.astype(np.float32) - PEOPLE_DET_ZP) * PEOPLE_DET_SCALE
 
-    # Reshape to [7, 7, 30]
+    # Reshape to [7, 7, 30] — flat HWC order matching ST's decode
     grid = raw_float.reshape(GRID_H, GRID_W, 30)
 
     # 30 channels = 5 anchors * 6 values per anchor
