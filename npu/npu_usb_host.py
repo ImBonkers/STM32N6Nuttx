@@ -130,6 +130,7 @@ def run_inference(ser, input_data, output_size):
 
 def sigmoid(x):
     """Numerically stable sigmoid."""
+    x = np.clip(x, -50, 50)
     return np.where(x >= 0,
                     1 / (1 + np.exp(-x)),
                     np.exp(x) / (1 + np.exp(x)))
