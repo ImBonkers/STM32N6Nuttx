@@ -2,20 +2,15 @@
 """
 Webcam -> NPU live inference pipeline.
 
-Captures webcam frames, sends to STM32N6 over USB CDC/ACM for
-TinyYOLOv2 people detection, displays results with bounding boxes.
+Supports TinyYOLOv2 (people_det) and YOLOv8n person detection.
+Auto-detects model from query response.
 
 Requires: pip install opencv-python numpy pyserial
-
-Usage:
-    python3 npu/webcam_infer.py
-    python3 npu/webcam_infer.py --port /dev/ttyACM1
-    python3 npu/webcam_infer.py --conf 0.5
-    python3 npu/webcam_infer.py --no-display
 """
 
 import argparse
 import glob
+import os
 import sys
 import time
 
@@ -74,21 +69,59 @@ def nms(detections, iou_threshold=0.3):
     return [detections[i] for i in keep]
 
 
-def preprocess_frame(frame):
-    """Resize webcam frame to 224x224 NHWC RGB uint8."""
-    resized = cv2.resize(frame, (INPUT_W, INPUT_H),
+def preprocess_frame(frame, input_w, input_h):
+    """Resize webcam frame to NHWC RGB uint8."""
+    resized = cv2.resize(frame, (input_w, input_h),
                          interpolation=cv2.INTER_LINEAR)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    # Model expects NHWC [224, 224, 3] — NOT NCHW
     return rgb.astype(np.uint8).flatten().view(np.int8)
 
 
-def decode_detections(raw_int8, conf_threshold, iou_threshold):
-    """Decode TinyYOLOv2 int8 output to filtered detections."""
+def decode_yolov8(raw_bytes, conf_threshold, iou_threshold, input_w, input_h):
+    """Decode YOLOv8n int8 output [5, 756] to detections.
+
+    DequantizeLinear SW epoch doesn't produce float — output is int8.
+    Channels 0-3 (bbox): scale=0.0563936718, zp=-128
+    Channel 4 (conf): scale=0.567050219, zp=82
+    Layout: NCHW [5, 756] — 5 channels, 756 boxes.
+    Bbox values are in pixel coords after dequantization.
+    """
+    raw = np.frombuffer(raw_bytes, dtype=np.int8)
+    n_boxes = len(raw) // 5
+    data = raw.reshape(5, n_boxes).astype(np.float32)
+
+    # Dequantize bbox channels (0-3): scale=0.0564, zp=-128
+    bbox = (data[:4] - (-128)) * 0.0563936718
+
+    # Dequantize conf channel (4): scale=0.567, zp=82
+    conf_raw = (data[4] - 82) * 0.567050219
+
+    detections = []
+    for i in range(n_boxes):
+        conf = float(conf_raw[i])
+        if conf < conf_threshold:
+            continue
+
+        cx = float(bbox[0, i])
+        cy = float(bbox[1, i])
+        w = float(bbox[2, i])
+        h = float(bbox[3, i])
+
+        x1 = max(0, cx - w / 2)
+        y1 = max(0, cy - h / 2)
+        x2 = min(input_w, cx + w / 2)
+        y2 = min(input_h, cy + h / 2)
+
+        if x2 > x1 + 2 and y2 > y1 + 2:
+            detections.append((x1, y1, x2, y2, conf, 0))
+
+    detections.sort(key=lambda d: d[4], reverse=True)
+    return nms(detections, iou_threshold)
+
+
+def decode_yolov2(raw_int8, conf_threshold, iou_threshold):
+    """Decode TinyYOLOv2 int8 output [7,7,30] to detections."""
     raw_float = (raw_int8.astype(np.float32) - PEOPLE_DET_ZP) * PEOPLE_DET_SCALE
-    # ST's decode iterates flat buffer with stride 6 (anch_stride).
-    # Try direct HWC reshape — the NPU output might already be
-    # in [7*7*5, 6] flat order matching ST's el_offset iteration.
     grid = raw_float.reshape(GRID_H, GRID_W, 30)
     vals_per_anchor = 30 // NUM_ANCHORS
 
@@ -154,12 +187,11 @@ def draw_stats(frame, fps, latency_ms, n_dets):
 def main():
     parser = argparse.ArgumentParser(description="Webcam -> NPU inference")
     parser.add_argument("--camera", type=int, default=None)
-    parser.add_argument("--image", type=str, default=None,
-                        help="Use static image instead of camera")
+    parser.add_argument("--image", type=str, default=None)
     parser.add_argument("--port", type=str, default=None)
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--conf", type=float, default=0.3)
-    parser.add_argument("--iou", type=float, default=0.3)
+    parser.add_argument("--iou", type=float, default=0.45)
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
@@ -178,39 +210,46 @@ def main():
         ser.close()
         sys.exit(1)
 
-    print(f"Connected. Input: {info['input_shape']} ({info['input_size']}B), "
-          f"Output: {info['output_shape']} ({info['output_size']}B)")
+    # Auto-detect model
+    out_shape = info["output_shape"]
+    in_shape = info["input_shape"]
+    is_yolov8 = out_shape[1] == 5  # [1, 5, 756, 0]
+    input_w = in_shape[2] if in_shape[1] > 3 else in_shape[3]
+    input_h = in_shape[1] if in_shape[1] > 3 else in_shape[2]
+    model_name = "YOLOv8n" if is_yolov8 else "TinyYOLOv2"
+
+    print(f"Connected [{model_name}]. Input: {in_shape} ({info['input_size']}B), "
+          f"Output: {out_shape} ({info['output_size']}B)")
+
+    def decode(output):
+        if is_yolov8:
+            return decode_yolov8(output.tobytes(), args.conf, args.iou,
+                                 input_w, input_h)
+        else:
+            return decode_yolov2(output, args.conf, args.iou)
 
     # --- Static image mode ---
     if args.image:
         frame = cv2.imread(args.image)
         if frame is None:
             print(f"ERROR: Cannot load {args.image}")
-            ser.write(bytes([CMD_QUIT]))
-            ser.close()
-            sys.exit(1)
+            ser.write(bytes([CMD_QUIT])); ser.close(); sys.exit(1)
 
         h, w = frame.shape[:2]
-        scale_x, scale_y = w / INPUT_W, h / INPUT_H
+        scale_x, scale_y = w / input_w, h / input_h
         print(f"Image: {w}x{h}, conf={args.conf}")
 
-        input_data = preprocess_frame(frame)
-        in_csum = sum(int(b) & 0xff for b in input_data.tobytes())
-
+        input_data = preprocess_frame(frame, input_w, input_h)
         output = run_inference(ser, input_data, info["output_size"])
         if output is None:
             print("Inference FAILED")
         else:
-            out_csum = sum(int(b) & 0xff for b in output.tobytes())
-            detections = decode_detections(output, args.conf, args.iou)
-            print(f"in={in_csum} out={out_csum} dets={len(detections)}")
+            detections = decode(output)
+            print(f"dets={len(detections)}")
             for (x1, y1, x2, y2, conf, _) in detections:
                 print(f"  ({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f}) {conf:.0%}")
 
             draw_detections(frame, detections, scale_x, scale_y)
-
-            # Save result
-            import os
             out_dir = os.path.join(os.path.dirname(args.image), "out")
             os.makedirs(out_dir, exist_ok=True)
             base = os.path.splitext(os.path.basename(args.image))[0]
@@ -223,9 +262,7 @@ def main():
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
 
-        ser.write(bytes([CMD_QUIT]))
-        ser.flush()
-        ser.close()
+        ser.write(bytes([CMD_QUIT])); ser.flush(); ser.close()
         return
 
     # --- Camera mode ---
@@ -234,22 +271,18 @@ def main():
         cam_idx = find_camera()
         if cam_idx is None:
             print("ERROR: No camera found.")
-            ser.write(bytes([CMD_QUIT]))
-            ser.close()
-            sys.exit(1)
+            ser.write(bytes([CMD_QUIT])); ser.close(); sys.exit(1)
 
     cap = cv2.VideoCapture(cam_idx)
     if not cap.isOpened():
         print(f"ERROR: Cannot open camera {cam_idx}")
-        ser.write(bytes([CMD_QUIT]))
-        ser.close()
-        sys.exit(1)
+        ser.write(bytes([CMD_QUIT])); ser.close(); sys.exit(1)
 
     cam_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     cam_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    scale_x = cam_w / INPUT_W
-    scale_y = cam_h / INPUT_H
-    print(f"Camera: {cam_w}x{cam_h}, conf={args.conf}, iou={args.iou}")
+    scale_x = cam_w / input_w
+    scale_y = cam_h / input_h
+    print(f"Camera: {cam_w}x{cam_h}, model={model_name}, conf={args.conf}")
 
     frame_count = 0
     t_start = time.monotonic()
@@ -260,7 +293,7 @@ def main():
             if not ret:
                 break
 
-            input_data = preprocess_frame(frame)
+            input_data = preprocess_frame(frame, input_w, input_h)
             t0 = time.monotonic()
             output = run_inference(ser, input_data, info["output_size"])
             latency = time.monotonic() - t0
@@ -269,19 +302,7 @@ def main():
             if output is None:
                 continue
 
-            in_csum = sum(int(b) & 0xff for b in input_data.tobytes())
-            out_csum = sum(int(b) & 0xff for b in output.tobytes())
-
-            detections = decode_detections(output, args.conf, args.iou)
-
-            det_str = ""
-            for (x1, y1, x2, y2, conf, _) in detections[:5]:
-                det_str += f" ({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f})@{conf:.0%}"
-            if len(detections) > 5:
-                det_str += f" +{len(detections)-5}more"
-
-            print(f"  #{frame_count} in={in_csum} out={out_csum} "
-                  f"dets={len(detections)}{det_str}")
+            detections = decode(output)
 
             wall = time.monotonic() - t_start
             fps = frame_count / wall if wall > 0 else 0
@@ -307,8 +328,7 @@ def main():
         print(f"{frame_count} frames in {wall:.1f}s = {frame_count/wall:.1f} FPS")
 
     try:
-        ser.write(bytes([CMD_QUIT]))
-        ser.flush()
+        ser.write(bytes([CMD_QUIT])); ser.flush()
     except Exception:
         pass
     ser.close()
