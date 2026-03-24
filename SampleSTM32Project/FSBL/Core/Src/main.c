@@ -36,7 +36,7 @@
 /* USER CODE BEGIN PD */
 #define NUTTX_FLASH_ADDR    0x70020000   /* NuttX location in external flash */
 #define NUTTX_RAM_ADDR      0x34000400   /* AXISRAM2 destination (where NuttX is linked) */
-#define NUTTX_SIZE          0x40000      /* 256KB max size for NuttX image */
+#define NUTTX_SIZE          0x100000     /* 1MB max size for NuttX image */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
