@@ -105,15 +105,13 @@ def is_people_det(info):
 
 
 def run_inference(ser, input_data, output_size):
-    """Send inference command + input, receive output tensor."""
+    """Send INFER + input, receive output tensor."""
 
-    # Send command byte separately, then input in small chunks.
-    # CDC/ACM has limited RX buffer on device — large writes block.
     ser.write(bytes([CMD_INFER]))
     ser.flush()
 
     data = input_data.tobytes()
-    chunk = 512
+    chunk = 4096
     sent = 0
     while sent < len(data):
         end = min(sent + chunk, len(data))
@@ -124,6 +122,8 @@ def run_inference(ser, input_data, output_size):
     output = ser.read(output_size)
     if len(output) != output_size:
         print(f"ERROR: expected {output_size} bytes output, got {len(output)}")
+        # Flush stale bytes to re-sync
+        ser.reset_input_buffer()
         return None
 
     return np.frombuffer(output, dtype=np.int8)

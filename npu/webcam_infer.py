@@ -78,16 +78,24 @@ def preprocess_frame(frame, input_w, input_h):
 
 
 def decode_yolov8(raw_bytes, conf_threshold, iou_threshold, input_w, input_h):
-    """Decode YOLOv8n float32 output [756, 5] to detections.
+    """Decode YOLOv8n int8 output [756, 5] to detections.
 
-    Driver reads DequantizeLinear float32 output from activation pool.
+    Driver sends raw int8 Concat output from activation pool (3780 bytes).
+    Host dequantizes with scale=0.00513258297, zp=-128.
     Layout: [756, 5] = [grid_cells, (cx, cy, w, h, conf)]
     All values normalized 0-1 relative to input size.
     756 = 24² + 12² + 6² (3 feature map scales for 192x192 input).
     """
-    # DequantizeLinear float32 output [756, 5] = 15120 bytes
-    # Channels: [cx, cy, w, h, conf] normalized 0-1
-    data = np.frombuffer(raw_bytes[:15120], dtype=np.float32).reshape(756, 5)
+    # Check 4-byte sync marker (0xAA55xxxx)
+    if len(raw_bytes) >= 4:
+        marker = int.from_bytes(raw_bytes[:4], 'little')
+        if (marker & 0xFFFF0000) != 0xAA550000:
+            return []  # Silently skip — caller handles re-sync
+
+    SCALE = 0.00513258297
+    ZP = -128
+    raw = np.frombuffer(raw_bytes[4:3784], dtype=np.int8)
+    data = ((raw.astype(np.float32) - ZP) * SCALE).reshape(756, 5)
 
     detections = []
     for i in range(756):
