@@ -89,8 +89,12 @@ def decode_yolov8(raw_bytes, conf_threshold, iou_threshold, input_w, input_h):
     # Check 4-byte sync marker (0xAA55xxxx)
     if len(raw_bytes) >= 4:
         marker = int.from_bytes(raw_bytes[:4], 'little')
+        seq = marker & 0xFFFF
         if (marker & 0xFFFF0000) != 0xAA550000:
-            return []  # Silently skip — caller handles re-sync
+            print(f"  DESYNC: 0x{marker:08X}")
+            return []
+        else:
+            print(f"  SYNC #{seq}", end="\r")
 
     SCALE = 0.00513258297
     ZP = -128
