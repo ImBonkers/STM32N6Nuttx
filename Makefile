@@ -38,8 +38,15 @@ NPU_WEIGHTS    := $(NPU_MODEL_DIR)/generated_yolov8n192/yolov8n192_atonbuf.xSPI2
 
 NUTTX_PATH     := $(HOME)/.local/bin:$(NUTTX_VENV)/bin:$(PATH)
 
+# ---- PX4 ----
+PX4_DIR        := $(HOME)/Documents/GitHub/PX4-Autopilot
+PX4_BOARD      := stm_n6-nucleo_default
+PX4_BUILD_DIR  := $(PX4_DIR)/build/$(PX4_BOARD)
+PX4_BIN        := $(PX4_BUILD_DIR)/$(PX4_BOARD).bin
+
 .PHONY: all rebuild nuttx fsbl sign flash-dev flash flash-fsbl flash-nuttx \
         flash-weights npu-model npu-venv serial configure menuconfig \
+        px4 px4-clean flash-px4-dev flash-px4 \
         clean clean-nuttx clean-fsbl clean-npu help
 
 # ---- Default target ----
@@ -134,6 +141,28 @@ npu-model: $(NPU_WEIGHTS)
 clean-npu:
 	rm -rf $(NPU_GEN_DIR) $(NPU_MODEL_DIR)/npu_test_fp32.onnx $(NPU_VENV)
 
+# ---- PX4 build ----
+px4:
+	$(MAKE) -C $(PX4_DIR) $(PX4_BOARD)
+
+px4-clean:
+	rm -rf $(PX4_BUILD_DIR)
+
+# ---- Flash: PX4 DEV mode (SRAM direct) ----
+flash-px4-dev: $(PX4_BIN)
+	$(STPROG) -c port=SWD mode=UR -halt \
+	  -d $(PX4_BIN) $(NUTTX_LOAD_ADDR) \
+	  -w32 $(VTOR_REG) $(NUTTX_LOAD_ADDR) \
+	  -g $(NUTTX_LOAD_ADDR)
+
+# ---- Flash: PX4 to external flash (needs FSBL) ----
+flash-px4: $(FSBL_SIGNED) $(PX4_BIN)
+	$(STPROG) -c port=SWD mode=UR -halt
+	$(STPROG) -c port=SWD mode=HOTPLUG ap=1 -el $(EXTLOADER) \
+	  -w $(FSBL_SIGNED) $(FSBL_FLASH_ADDR)
+	$(STPROG) -c port=SWD mode=HOTPLUG ap=1 -el $(EXTLOADER) \
+	  -w $(PX4_BIN) $(NUTTX_FLASH_ADDR)
+
 # ---- Serial console ----
 serial:
 	tio /dev/ttyACM0 -b 115200
@@ -170,11 +199,17 @@ help:
 	@echo "    make sign         Sign FSBL binary (auto Reset_Handler)"
 	@echo "    make npu-model    Generate INT8 NPU model (venv + quantize + STEdgeAI)"
 	@echo ""
+	@echo "  PX4:"
+	@echo "    make px4          Build PX4 for STM32N6 Nucleo"
+	@echo "    make px4-clean    Clean PX4 build"
+	@echo ""
 	@echo "  Flash:"
 	@echo "    make flash-dev    Flash NuttX to SRAM (DEV mode)"
 	@echo "    make flash        Flash signed FSBL + NuttX to ext flash"
 	@echo "    make flash-fsbl   Flash only signed FSBL to ext flash"
 	@echo "    make flash-nuttx  Flash only NuttX to ext flash"
+	@echo "    make flash-px4-dev Flash PX4 to SRAM (DEV mode)"
+	@echo "    make flash-px4    Flash signed FSBL + PX4 to ext flash"
 	@echo "    make flash-weights Flash NPU model weights to ext flash"
 	@echo ""
 	@echo "  Console:"
