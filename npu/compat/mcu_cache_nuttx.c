@@ -1,18 +1,27 @@
 /**
  * MCU D-cache maintenance for LL_ATON on NuttX.
  * Replaces ST's mcu_cache.c which depends on CMSIS SCB_* functions.
- * Uses NuttX cache API (up_invalidate_dcache, etc.) instead.
+ *
+ * IMPORTANT: On Cortex-M55 Secure state, MVA-based cache ops
+ * (DCIMVAC, DCCMVAC, DCCIMVAC) fail silently (pitfall #32).
+ * ALL range operations use set/way (full D-cache) operations
+ * instead.  This is less efficient but correct.
  */
 
+#include <nuttx/config.h>
 #include <stdbool.h>
 #include "mcu_cache.h"
+#ifdef CONFIG_ARMV8M_DCACHE
 #include <nuttx/cache.h>
+#endif
 
 bool mcu_cache_is_enabled(void)
 {
-  /* Check CCR.DC bit */
-
+#ifdef CONFIG_ARMV8M_DCACHE
   return (*(volatile uint32_t *)0xE000ED14 & (1 << 16)) != 0;
+#else
+  return false;
+#endif
 }
 
 void mcu_cache_invalidate(void)
@@ -41,24 +50,36 @@ void mcu_cache_clean_invalidate(void)
 
 void mcu_cache_invalidate_range(uint32_t start_addr, uint32_t end_addr)
 {
+  (void)start_addr;
+  (void)end_addr;
   if (mcu_cache_is_enabled())
     {
-      up_invalidate_dcache(start_addr, end_addr);
+      /* MVA ops (DCIMVAC) broken on M55 Secure — use set/way */
+
+      up_flush_dcache_all();
     }
 }
 
 void mcu_cache_clean_range(uint32_t start_addr, uint32_t end_addr)
 {
+  (void)start_addr;
+  (void)end_addr;
   if (mcu_cache_is_enabled())
     {
-      up_clean_dcache(start_addr, end_addr);
+      /* MVA ops (DCCMVAC) broken on M55 Secure — use set/way */
+
+      up_flush_dcache_all();
     }
 }
 
 void mcu_cache_clean_invalidate_range(uint32_t start_addr, uint32_t end_addr)
 {
+  (void)start_addr;
+  (void)end_addr;
   if (mcu_cache_is_enabled())
     {
-      up_flush_dcache(start_addr, end_addr);
+      /* MVA ops (DCCIMVAC) broken on M55 Secure — use set/way */
+
+      up_flush_dcache_all();
     }
 }

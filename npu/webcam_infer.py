@@ -78,30 +78,23 @@ def preprocess_frame(frame, input_w, input_h):
 
 
 def decode_yolov8(raw_bytes, conf_threshold, iou_threshold, input_w, input_h):
-    """Decode YOLOv8n output to detections.
+    """Decode YOLOv8n float32 output [756, 5] to detections.
 
-    DequantizeLinear SW epoch doesn't produce float — buffer has int8.
-    Pre-DequantizeLinear tensor: Concat_544 [1, 756, 5] int8
-      scale=0.00513258297, zp=-128
-    Channels: [x_center, y_center, width, height, confidence]
-    Coordinates are normalized (0-1). Confidence is 0-1.
-    Only first 3780 bytes of the 15120-byte buffer are meaningful.
+    Driver reads DequantizeLinear float32 output from activation pool.
+    Layout: [756, 5] = [grid_cells, (cx, cy, w, h, conf)]
+    All values normalized 0-1 relative to input size.
+    756 = 24² + 12² + 6² (3 feature map scales for 192x192 input).
     """
-    SCALE = 0.00513258297
-    ZP = -128
-
-    raw = np.frombuffer(raw_bytes[:3780], dtype=np.int8)
-    data = (raw.astype(np.float32) - ZP) * SCALE
-    # Try [5, 756] layout (Transpose ran on int8 before DequantizeLinear)
-    data = data.reshape(5, 756).T  # → [756, 5]
+    # DequantizeLinear float32 output [756, 5] = 15120 bytes
+    # Channels: [cx, cy, w, h, conf] normalized 0-1
+    data = np.frombuffer(raw_bytes[:15120], dtype=np.float32).reshape(756, 5)
 
     detections = []
     for i in range(756):
-        conf = float(min(data[i, 4], 1.0))
+        conf = float(data[i, 4])
         if conf < conf_threshold:
             continue
 
-        # Coords are normalized 0-1, scale to pixel space
         cx = float(data[i, 0]) * input_w
         cy = float(data[i, 1]) * input_h
         w = float(data[i, 2]) * input_w
@@ -190,8 +183,8 @@ def main():
     parser.add_argument("--image", type=str, default=None)
     parser.add_argument("--port", type=str, default=None)
     parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument("--conf", type=float, default=0.3)
-    parser.add_argument("--iou", type=float, default=0.45)
+    parser.add_argument("--conf", type=float, default=0.5)
+    parser.add_argument("--iou", type=float, default=0.3)
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
