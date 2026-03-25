@@ -102,7 +102,13 @@ typedef struct
 #define __NOP()    __asm volatile ("nop")
 #endif
 
-/* NVIC stubs — polling mode doesn't use interrupts */
+/* NVIC — route through NuttX IRQ API via OSAL functions.
+ * The OSAL ENTER_CS/EXIT_CS macros call these for critical sections.
+ * For async mode, we need real enable/disable; for polling, no-ops work.
+ */
+
+void LL_ATON_OSAL_ENABLE_IRQ_FUNC(int irq_line);
+void LL_ATON_OSAL_DISABLE_IRQ_FUNC(int irq_line);
 
 static inline void NVIC_EnableIRQ(int irq)  { (void)irq; }
 static inline void NVIC_DisableIRQ(int irq) { (void)irq; }
