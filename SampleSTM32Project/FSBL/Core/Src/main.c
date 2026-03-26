@@ -36,7 +36,7 @@
 /* USER CODE BEGIN PD */
 #define NUTTX_FLASH_ADDR    0x70020000   /* NuttX location in external flash */
 #define NUTTX_RAM_ADDR      0x34000400   /* AXISRAM2 destination (where NuttX is linked) */
-#define NUTTX_SIZE          0x100000     /* 1MB max size for NuttX image */
+#define NUTTX_SIZE          0x160000     /* 1.375MB max — must stay below FSBL at 0x34180400 */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -432,9 +432,9 @@ static void load_and_jump_to_nuttx(void)
   BSP_LED_Off(LED_GREEN);
   HAL_Delay(100);
 
-  /* Stack pointer should be in AXISRAM2 range (0x34000000-0x34180000) */
-  /* Note: FSBL uses 0x34180000+ so NuttX stack must be below that */
-  if ((initial_sp < 0x34000000) || (initial_sp > 0x34180000))
+  /* Stack pointer should be in AXISRAM range (0x34000000-0x34200000) */
+  /* PX4+NPU uses up to 2MB SRAM */
+  if ((initial_sp < 0x34000000) || (initial_sp > 0x34200000))
   {
     serial_puts("ERROR: Invalid SP!\r\n");
     /* Invalid stack pointer - turn on red LED and halt */
