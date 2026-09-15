@@ -126,6 +126,26 @@ def run_inference(ser, input_data, output_size):
         ser.reset_input_buffer()
         return None
 
+    # Realign if stray bytes crept into the stream.  The device frames every
+    # response with a 4-byte 0xAA55<seq> marker, so bytes 2..3 must be 55 AA.
+    # A surplus of N bytes shifts the marker to offset 2+N; drop those N bytes
+    # and pull N more to complete the frame, which re-aligns the stream for
+    # every subsequent read rather than desyncing permanently.
+    pos = output.find(b"\x55\xaa")
+    if pos != 2:
+        if pos > 2:
+            skew = pos - 2
+            tail = ser.read(skew)
+            if len(tail) != skew:
+                ser.reset_input_buffer()
+                return None
+            output = output[skew:] + tail
+            print(f"  RESYNC: dropped {skew} stray byte(s)")
+        else:
+            # Marker missing entirely — drain and skip this frame.
+            ser.reset_input_buffer()
+            return None
+
     return np.frombuffer(output, dtype=np.int8)
 
 
