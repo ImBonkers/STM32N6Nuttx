@@ -31,3 +31,8 @@ bootloader.old/
 *.tmp
 *.swp
 *~
+
+# Demo firmware/weight snapshots and host venv (regenerate; not source)
+_demo_backup/
+npu/.venv*/
+npu/model/generated_*/

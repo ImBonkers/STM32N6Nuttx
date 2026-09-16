@@ -1,0 +1,15 @@
+// Neural-ART compiler profiles for this project.
+//
+// "ec" matches the stock "default" profile plus --enable-epoch-controller, so
+// a build with it differs from the shipped model only by EC code generation.
+// The driver uses LL_ATON_Set_User_Input_Buffer_*/Set_User_Output_Buffer_*
+// (generate is invoked with --no-inputs-allocation --no-outputs-allocation),
+// so epochs touching user I/O are kept out of EC blobs rather than merged.
+{
+    "Profiles": {
+        "ec": {
+            "memory_pool": "/home/ubuntu/STMicroelectronics/STEdgeAI3/3.0/Utilities/linux/targets/stm32/resources/NPU/STM32N6xx/stm32n6.mpool",
+            "options": "--native-float --cache-maintenance --Ocache-opt --enable-virtual-mem-pools --Os --Oauto-sched --enable-epoch-controller --ec-user-io-alone"
+        }
+    }
+}
