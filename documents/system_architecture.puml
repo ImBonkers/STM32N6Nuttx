@@ -1,0 +1,81 @@
+@startuml System Architecture Overview
+!theme plain
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam defaultFontSize 13
+skinparam padding 6
+skinparam nodesep 40
+skinparam ranksep 30
+skinparam linetype ortho
+left to right direction
+
+package "Ground Station" as gcs #LightGray {
+    [QGroundControl\n/ jMAVSim] as qgc
+    [ST-LINK V3EC] as stlink
+}
+
+package "STM32N657X0\n(Cortex-M55 @ 800MHz)" as mcu #LightBlue {
+
+    package "PX4 Autopilot" as px4 #LightCoral {
+        [uORB] as uorb
+        [EKF2] as ekf
+        [Commander] as cmd
+        [Mixer] as mixer
+        [MAVLink] as mavlink
+    }
+
+    package "NuttX RTOS" as nuttx #White {
+        [Scheduler] as sched
+        [Drivers] as drivers
+    }
+
+    package "NPU (Neural-ART)" as npu_block #LightGreen {
+        [LL_ATON] as aton
+        [CACHEAXI] as cacheaxi
+    }
+
+    package "Peripherals" as periph #WhiteSmoke {
+        [USART1] as uart
+        [USB OTG HS] as usb
+        [SPI5 / I2C2] as sensor_bus
+        [XSPI2] as xspi
+        [ADC / PWM\nRTC / RNG] as misc
+    }
+
+    package "AXISRAM (4.2MB)" as mem #Lavender {
+        [NuttX + PX4\nCode & Data] as sram1
+        [NPU Buffers\n(shared)] as sram_npu
+    }
+}
+
+package "External Flash\n(64MB)" as flash #LightYellow {
+    [FSBL 128KB] as fsbl_flash
+    [Firmware\n1.4MB] as fw_flash
+    [DNN Weights\n16MB] as weights
+    [littlefs\n46MB] as lfs
+}
+
+' Layered connections (top to bottom)
+qgc --> usb : MAVLink\nUSB-C
+qgc --> stlink
+stlink --> uart : Console\n115200
+
+uorb --> ekf
+uorb --> cmd
+uorb --> mixer
+uorb --> mavlink
+
+aton --> uorb : Detections
+
+px4 --> nuttx : POSIX API
+drivers --> periph
+mavlink --> usb
+
+aton --> cacheaxi
+cacheaxi --> xspi : Cached reads
+aton --> sram_npu
+nuttx --> sram1
+
+xspi --> flash : OPI DTR\n400MB/s
+
+@enduml

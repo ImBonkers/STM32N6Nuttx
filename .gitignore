@@ -36,3 +36,35 @@ bootloader.old/
 _demo_backup/
 npu/.venv*/
 npu/model/generated_*/
+
+# Vendor SDKs and reference trees (obtain separately from ST)
+x-cube-n6-ai-people-detection-tracking/
+x-cube-n6-ai-h264-usb-uvc/
+STM32N6_FSBL_Modes/
+bootloader/mcuboot/
+st_ai_ws/
+st_ai_output/
+SampleSTM32Project/*/build/
+
+# Reference manuals and datasheets (ST, not redistributed here)
+documents/*.pdf
+documents/rm0486.txt
+
+# Scratch experiments and captures
+npu/_*.py
+npu/usb_*.py
+npu/test_write_keepopen.py
+npu/mavlink_sniff.py
+tio
+tio.log
+re
+
+# Symlinks into the vendor SDK
+Drivers
+Middlewares
+
+# Working notes and scratch projects
+.planning/
+memory/
+CLAUDE_bak*.md
+USB_SpeedTest/

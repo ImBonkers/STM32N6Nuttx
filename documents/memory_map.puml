@@ -1,0 +1,47 @@
+@startuml Memory Map
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 12
+
+title STM32N6 Memory Map Overview
+
+map "External Flash (XSPI2)" as flash {
+    0x70000000 => FSBL (128KB)
+    0x70020000 => Firmware: NuttX (355KB) or PX4 (1.4MB)
+    0x70220000 => DNN Weights (16MB)
+    0x71220000 => littlefs (46MB)
+}
+
+map "AXISRAM (4.2MB)" as sram {
+    0x34000000 => Boot ROM reserved (1KB)
+    0x34000400 => NuttX / PX4 firmware (~4MB shared)
+    0x34400000 => End of SRAM
+}
+
+note bottom of sram
+  All 6 SRAM banks mapped as one
+  contiguous region. NPU buffers
+  allocated at runtime from the
+  same address space.
+end note
+
+map "Peripheral Space (Secure)" as periph {
+    0x50021000 => GPDMA1
+    0x56008000 => SYSCFG
+    0x54024000 => RIFSC
+    0x58020000 => HPDMA1
+    0x58040000 => USB OTG HS (MAVLink)
+    0x580DFC00 => CACHEAXI
+    0x580E0000 => NPU (ATON)
+}
+
+flash --> sram : FSBL copies\nfirmware at boot
+sram --> periph : CPU accesses\nvia Secure bus
+
+note bottom of sram
+  PX4 builds on NuttX —
+  same flash slot, same
+  boot path, same SRAM.
+end note
+
+@enduml

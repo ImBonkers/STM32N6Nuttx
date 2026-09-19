@@ -1,0 +1,88 @@
+@startuml NPU Integration
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 13
+skinparam padding 6
+skinparam nodesep 30
+skinparam ranksep 25
+skinparam linetype ortho
+
+title NPU Driver Integration (PX4 + NuttX)
+
+package "PX4 Autopilot" as px4 #LightCoral {
+    [Vision Task] as vision
+    [uORB] as uorb
+}
+
+package "NuttX Userspace" as user #White {
+    [npu_test app] as nputest
+}
+
+package "NuttX Kernel" as kernel #LightBlue {
+    package "AIE Framework" as aie #White {
+        [/dev/npu0\n(char device)] as devnpu
+    }
+
+    package "STM32N6 NPU Driver\n(stm32_npu.c)" as npudrv #White {
+        [init] as drv_init
+        [feed_input] as drv_feed
+        [run_sync] as drv_run
+        [get_output] as drv_out
+    }
+
+    package "LL_ATON Runtime\n(ST middleware)" as llaton #WhiteSmoke {
+        [RT_Init_Network] as rt_init
+        [RT_RunEpochBlock] as rt_run
+        [Epoch Blocks\n(HW only)] as epochs
+    }
+
+    package "Compat Shims\n(npu/compat/)" as compat #WhiteSmoke {
+        [OSAL\n(yield on WFE)] as osal
+        [D-cache ops\n(NuttX API)] as cache_shim
+        [CACHEAXI ops\n(direct regs)] as cacheaxi_shim
+    }
+}
+
+package "ATON Hardware" as hw #LightGreen {
+    [STRENG Engines\n(DMA + compute)] as streng
+    [CACHEAXI\nController] as cacheaxi
+}
+
+package "Memory" as mem #Lavender {
+    [AXISRAM\n(activations)] as sram
+    [XSPI2 Flash\n(weights)] as xspi
+}
+
+' PX4 path
+vision --> devnpu
+vision --> uorb
+
+' Standalone NuttX path
+nputest --> devnpu
+
+' Driver ioctls
+devnpu --> drv_init
+devnpu --> drv_feed
+devnpu --> drv_run
+devnpu --> drv_out
+
+' Driver to runtime
+drv_init --> rt_init
+drv_run --> rt_run
+rt_run --> epochs
+
+' Runtime to compat
+epochs --> osal
+epochs --> cache_shim
+epochs --> cacheaxi_shim
+
+' Compat to hardware
+osal --> streng
+cache_shim --> sram
+cacheaxi_shim --> cacheaxi
+
+' Hardware to memory
+streng --> sram
+cacheaxi --> xspi
+
+@enduml

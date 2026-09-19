@@ -1,0 +1,75 @@
+@startuml STM32N6 NPU Driver Sequence
+
+title STM32N6 NPU Driver — Double-Buffered USB Inference
+
+actor "Host PC" as Host
+participant "USB DMA" as UDMA
+participant "CPU" as CPU
+participant "/dev/npu0" as Dev
+participant "LL_ATON\nRuntime" as RT
+participant "NPU HW" as HW
+
+== Boot ==
+
+[-> Dev : stm32_npu_setup()
+Dev -> HW : Init SRAM, RIFSC, ATON, STRENG self-test
+Dev -> RT : LL_ATON_Init()
+Dev -> Dev : register /dev/npu0
+
+== Load Model ==
+
+CPU -> Dev : ioctl(LOAD)
+Dev -> RT : RuntimeInit + Init_Network
+
+== Prime: Receive First Frame ==
+
+Host -> UDMA : Frame 0
+UDMA --> CPU : Buf[0] ready
+
+== Steady-State Pipeline ==
+
+loop Each frame
+
+  CPU -> Dev : feed_input(Buf[0])
+  CPU -> Dev : ioctl(RUN_SYNC)
+
+  loop RunEpochBlock() until DONE
+    CPU -> RT : RunEpochBlock()
+
+    alt NO_WFE — SW / Hybrid epoch
+      RT -> CPU : CPU executes epoch\n(DequantizeLinear, Resize,\nConcat, Slice, Transpose)
+      note right: Runs on CPU immediately,\ncall RunEpochBlock() again
+
+    else WFE — HW epoch
+      RT -> HW : Program & start HW epoch
+
+      note over UDMA, HW
+        NPU HW runs autonomously.
+        USB DMA fills Buf[1] — no CPU needed.
+      end note
+
+      Host -> UDMA : Frame 1
+      HW -> HW : Compute (weights via CACHEAXI)
+
+      CPU -> CPU : poll STRENG + sched_yield()
+      HW --> CPU : Epoch done
+    end
+  end
+
+  RT --> CPU : DONE — all epochs complete
+  CPU -> Dev : get_output → Result 0
+  CPU -> UDMA : send Result 0
+  UDMA -> Host : Result 0
+
+  note over CPU
+    Swap: Buf[0] ↔ Buf[1]
+  end note
+
+end
+
+== Cleanup ==
+
+CPU -> Dev : close()
+Dev -> Dev : Disable CACHEAXI, unlock XSPI2
+
+@enduml

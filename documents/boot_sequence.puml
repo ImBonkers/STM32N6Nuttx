@@ -1,0 +1,46 @@
+@startuml Boot Sequence
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 13
+
+title STM32N6 Boot Sequence
+
+|Boot ROM|
+start
+:Power On;
+:Load signed FSBL from 0x70000000;
+:Authenticate FSBL;
+
+|FSBL|
+:Enable SMPS overdrive;
+:Configure VOS SCALE0 + PLL1 800MHz;
+:Init XSPI2;
+:Copy firmware to 0x34000400;
+:Jump to entry point;
+
+|NuttX RTOS|
+:Clear MSPLIM/PSPLIM;
+:Disable SysTick, set VTOR;
+:Enable FPU;
+:Enable VddIO power;
+:Enable clocks (ENSR), skip PLL;
+:Configure LPEN;
+:Init USART1 console;
+:Start scheduler + TIM2;
+:Register peripherals;
+
+if (PX4 firmware?) then (yes)
+    |PX4 Autopilot|
+    :Start uORB, EKF2, Commander;
+    :Init sensor drivers;
+    :Start MAVLink (USB);
+    :Start NPU inference;
+    :Enter control loop;
+else (no)
+    |NuttX RTOS|
+    :Launch NSH shell;
+endif
+
+stop
+
+@enduml
