@@ -127,6 +127,17 @@ make test-suite-gui ROUTINE=routines/demo_showcase.json
 The chip port lives in `nuttx/arch/arm/src/stm32n6/`, board support in
 `nuttx/boards/arm/stm32n6/nucleo-n657x0-q/`.
 
+`nuttx/` and `apps/` are separate git repositories and are not contained in this
+one. To reproduce a build, both must be checked out alongside this tree:
+
+| Directory | Repository | Branch |
+|---|---|---|
+| `nuttx/` | fork of `apache/nuttx` | `descriptor-dma-spike` (chip port, board support, NPU driver) |
+| `apps/` | fork of `apache/nuttx-apps` | `npu-demo` (`examples/npu_test`, `examples/npu_concur`) |
+
+PX4 is likewise a separate tree, on a branch carrying the STM32N6 board target and
+the `npu_inference` module.
+
 Vendor SDKs (X-CUBE-AI reference applications, ST reference manuals, the ST Edge AI
 workspace) are deliberately not committed; they are large and obtainable from ST.
 
