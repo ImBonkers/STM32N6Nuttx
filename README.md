@@ -73,6 +73,10 @@ weights at `0x71000000`.
 Requires `arm-none-eabi-gcc`, STM32CubeProgrammer (with the v2.22+ signing tool) and
 ST Edge AI Core 3.x for regenerating models.
 
+The ST HAL is not committed here.  Check out STM32CubeN6 alongside this tree as
+`STM32CubeN6/`; the first-stage bootloader reaches it through the tracked
+`SampleSTM32Project/Drivers` symlink.
+
 ```bash
 make nuttx          # build NuttX
 make fsbl && make sign   # build and sign the first-stage bootloader

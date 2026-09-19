@@ -59,9 +59,10 @@ tio
 tio.log
 re
 
-# Symlinks into the vendor SDK
-Drivers
-Middlewares
+# Symlinks into the vendor SDK (repository root only; the bootloader's
+# SampleSTM32Project/Drivers symlink is tracked)
+/Drivers
+/Middlewares
 
 # Working notes and scratch projects
 .planning/
