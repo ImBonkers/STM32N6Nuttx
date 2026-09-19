@@ -139,8 +139,11 @@ one. To reproduce a build, both must be checked out alongside this tree:
 | `nuttx/` | fork of `apache/nuttx` | `descriptor-dma-spike` (chip port, board support, NPU driver) |
 | `apps/` | fork of `apache/nuttx-apps` | `npu-demo` (`examples/npu_test`, `examples/npu_concur`) |
 
-PX4 is likewise a separate tree, on a branch carrying the STM32N6 board target and
-the `npu_inference` module.
+PX4 is likewise a separate tree: a fork of `PX4/PX4-Autopilot` on branch
+`pr-nuttx-12-12`, carrying the STM32N6 board target and the `npu_inference` module.
+Its `platforms/nuttx/NuttX/nuttx` submodule points at a fork of `PX4/NuttX` on branch
+`stm32n6-npu`, which holds the chip port, board support and NPU driver that the flight
+build uses.
 
 Vendor SDKs (X-CUBE-AI reference applications, ST reference manuals, the ST Edge AI
 workspace) are deliberately not committed; they are large and obtainable from ST.
@@ -171,9 +174,10 @@ and are corrected here:
 
 - **Inference latency is 33 ms, not 7 ms.** The faster figure came from an epoch
   completion race: the runtime advanced before stream engines finished, so the same
-  input produced different output on every run. PX4's `NPU_STATUS` telemetry still
-  reports the artifact and should not be quoted until the fix is ported to its NuttX
-  submodule.
+  input produced different output on every run. The corrected wait is now in both the
+  NuttX tree and PX4's NuttX submodule, but the logged flights predate it, so the
+  `npu_ms`, `npu_fps` and `npu_avg` fields in those logs carry the artifact and should
+  not be quoted. `npu_duty`, which sets the load, is unaffected.
 - **CACHEAXI does not accelerate this workload.** Enabling, retaining or fully
   disabling it produced identical timing to within 1 microsecond, because the cache is
   256 KB against a 3 MB weight set that is streamed once per inference with no reuse.
